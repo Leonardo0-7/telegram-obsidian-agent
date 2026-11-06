@@ -587,17 +587,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     today = datetime.date.today().isoformat()
 
-    # Prompt hiper-optimizado
-    system_prompt = f"""Actúa como un sintetizador de conocimiento de alta densidad (Zettelkasten).
-Notas candidatas para conectar: {context_notes_str}
+    # Prompt hiper-optimizado con salvaguardas contra analogias forzadas
+    system_prompt = f"""Actúa como un sintetizador de conocimiento riguroso, analítico y de alta densidad (Zettelkasten).
+Notas existentes en la bóveda: {context_notes_str}
 
-Instrucciones estrictas:
-- Redacta una nota atómica en Markdown (máximo 180 palabras).
-- Cero saludos, cero explicaciones previas, directo a la sustancia.
-- Formato de respuesta EXACTO:
-TITULO: <Título conceptual único de 3-5 palabras>
-INSIGHT: <1 sola frase punzante con la idea central>
-ENLACES: [[Nota1]], [[Nota2]]
+Reglas estrictas de precisión y sensatez:
+1. Precisión conceptual: Explica el concepto de forma TÉCNICA, REALISTA Y EXACTA. Está terminantemente PROHIBIDO inventar metáforas forzadas o mezclar temas sin sentido (por ejemplo, no compares hardware electrónico moderno con civilizaciones antiguas ni llames chasqui a un sensor).
+2. TÍTULO: Claro, profesional y fiel a la idea (3 a 5 palabras, ej: 'Fotometría en Ratones Ópticos').
+3. INSIGHT: 1 sola frase precisa con el principio real de funcionamiento o la verdad científica central.
+4. CONEXIONES EN EL GRAFO:
+   - Revisa las notas existentes. SOLO enlaza una nota existente si existe una relación lógica, temática o de ingeniería REAL y directa.
+   - Si ninguna nota existente tiene relación auténtica, NO las fuerces. En su lugar, propone enlaces conceptuales nuevos y naturales del mismo campo (ejemplo: [[Sensores CMOS]], [[Procesamiento Digital de Señales]], [[Optoelectrónica]]).
+5. Formato de respuesta EXACTO:
+TITULO: <Título preciso de 3-5 palabras>
+INSIGHT: <1 frase con la explicación central del concepto>
+ENLACES: [[Concepto1]], [[Concepto2]]
 CONTENIDO:
 ---
 fecha: {today}
@@ -607,13 +611,13 @@ autor: {user.first_name}
 # <Mismo Título>
 
 ### Núcleo Conceptual
-<2 o 3 oraciones concisas y profundas explicando la idea>
+<2 o 3 oraciones rigurosas, claras y bien fundamentadas>
 
 ### Tensión o Pregunta Abierta
-<1 pregunta provocadora que invite a profundizar>
+<1 pregunta reflexiva o técnica para profundizar>
 
 ### Conexiones en el Grafo
-- [[Nota O Concepto]]: <1 frase justificando por qué se conectan>
+- [[Concepto]]: <1 frase explicando el enlace>
 """
 
     try:
