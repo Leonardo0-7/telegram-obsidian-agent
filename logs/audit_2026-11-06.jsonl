@@ -80,3 +80,4 @@
 {"seq": 1, "timestamp": "2026-11-06T20:11:32.737085+00:00", "level": "INFO", "event": "AGENT_STARTUP", "user": null, "details": {"version": "2.2", "repo": "Leonardo0-7/telegram-obsidian-agent", "folder": "Obsesiones"}}
 {"seq": 1, "timestamp": "2026-11-06T20:11:58.375984+00:00", "level": "INFO", "event": "AGENT_STARTUP", "user": null, "details": {"version": "2.2", "repo": "Leonardo0-7/telegram-obsidian-agent", "folder": "Obsesiones"}}
 {"seq": 1, "timestamp": "2026-11-06T20:12:31.141041+00:00", "level": "INFO", "event": "AGENT_STARTUP", "user": null, "details": {"version": "2.2", "repo": "Leonardo0-7/telegram-obsidian-agent", "folder": "Obsesiones"}}
+{"seq": 1, "timestamp": "2026-11-06T20:12:51.487249+00:00", "level": "INFO", "event": "AGENT_STARTUP", "user": null, "details": {"version": "2.2", "repo": "Leonardo0-7/telegram-obsidian-agent", "folder": "Obsesiones"}}
