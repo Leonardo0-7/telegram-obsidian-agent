@@ -65,6 +65,24 @@ def run_health_check_server():
         logger.warning(f"No se pudo iniciar el servidor health check: {e}")
 
 
+def get_relevant_notes(user_text, all_notes, top_k=15):
+    """Filtra solo las notas más pertinentes para ahorrar tokens en el prompt."""
+    if len(all_notes) <= top_k:
+        return all_notes
+
+    # Puntuación simple por coincidencia de palabras clave
+    user_words = set(w.lower() for w in user_text.split() if len(w) > 3)
+    scored = []
+    for note in all_notes:
+        note_words = set(w.lower() for w in note.replace("_", " ").replace("-", " ").split())
+        overlap = len(user_words.intersection(note_words))
+        scored.append((overlap, note))
+
+    # Ordenar por mayor coincidencia y tomar las mejores top_k
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [note for _, note in scored[:top_k]]
+
+
 def get_existing_notes():
     """Obtiene los nombres de notas existentes en GitHub para retroalimentar el grafo."""
     if not GITHUB_TOKEN or not GITHUB_REPO:
@@ -158,38 +176,48 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Procesa cada mensaje de texto recibido."""
+    """Procesa cada mensaje con máxima densidad conceptual y mínimo consumo de tokens."""
     user = update.effective_user
     if ALLOWED_USER_ID != 0 and user.id != ALLOWED_USER_ID:
         await update.message.reply_text(f"⛔ No autorizado. Tu ID: `{user.id}`", parse_mode="Markdown")
         return
 
     user_text = update.message.text
-    status_msg = await update.message.reply_text("🧠 Conectando tu idea con el grafo en Obsidian...")
+    status_msg = await update.message.reply_text("⚡ Sintetizando idea y trazando grafo...")
 
-    # 1. Obtener notas actuales para el contexto
-    existing_notes = get_existing_notes()
-    existing_str = ", ".join([f"[[{n}]]" for n in existing_notes]) if existing_notes else "Bóveda vacía por ahora."
+    # 1. Obtener notas y filtrar solo las más relevantes (ahorro masivo de tokens)
+    all_notes = get_existing_notes()
+    relevant_notes = get_relevant_notes(user_text, all_notes, top_k=12)
+    context_notes_str = ", ".join([f"[[{n}]]" for n in relevant_notes]) if relevant_notes else "Bóveda vacía"
 
     today = datetime.date.today().isoformat()
 
-    system_prompt = f"""
-Eres un Cartógrafo de Conocimiento y Pensamiento Lateral. Tu labor es transformar las ideas espontáneas del usuario en notas de Obsidian profundamente interconectadas.
+    # Prompt hiper-optimizado: cero relleno, máxima densidad tipo Zettelkasten
+    system_prompt = f"""Actúa como un sintetizador de conocimiento de alta densidad (Zettelkasten).
+Notas candidatas para conectar: {context_notes_str}
 
-Notas que actualmente existen en su bóveda:
-{existing_str}
-
-Instrucciones:
-1. Define un TÍTULO corto y sugerente (máximo 5 palabras, sin caracteres especiales como / \\ : * ? " < > |).
-2. Estructura el archivo en Markdown:
-   - Encabezado YAML con fecha ({today}) y 3-5 tags relevantes (#tema).
-   - Resumen o desarrollo conciso de la idea.
-   - Preguntas abiertas que despierta esta idea.
-   - Sección obligatoria: '## Conexiones en el Grafo', donde relaciones esta idea con notas existentes usando enlaces [[Nombre de Nota]]. Si no existen notas relacionadas directas, sugiere 1 o 2 conceptos potenciales que valga la pena conectar a futuro en formato [[Nuevo Concepto]].
-3. Devuelve estrictamente el siguiente formato:
-TITULO: <Título aquí>
+Instrucciones estrictas:
+- Redacta una nota atómica en Markdown (máximo 180 palabras).
+- Cero saludos, cero explicaciones previas, directo a la sustancia.
+- Formato de respuesta EXACTO:
+TITULO: <Título conceptual único de 3-5 palabras>
+INSIGHT: <1 sola frase punzante con la idea central>
+ENLACES: [[Nota1]], [[Nota2]]
 CONTENIDO:
-<Markdown completo>
+---
+fecha: {today}
+tags: [tag1, tag2, tag3]
+---
+# <Mismo Título>
+
+### Núcleo Conceptual
+<2 o 3 oraciones concisas y profundas explicando la idea>
+
+### Tensión o Pregunta Abierta
+<1 pregunta provocadora que invite a profundizar>
+
+### Conexiones en el Grafo
+- [[Nota O Concepto]]: <1 frase justificando por qué se conectan>
 """
 
     try:
@@ -199,19 +227,25 @@ CONTENIDO:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text}
             ],
-            temperature=0.7
+            temperature=0.3,
+            max_tokens=500  # Evita divagaciones y ahorra tokens de salida
         )
-        ai_reply = response.choices[0].message.content
+        ai_reply = response.choices[0].message.content.strip()
 
-        # Parsear título y contenido
-        lines = ai_reply.split("\n")
-        title = "Nueva Obsesion"
+        # Parseo estructurado
+        title = "Nueva_Idea"
+        insight = "Idea registrada en el grafo."
+        links = "Ninguno"
         content_lines = []
         is_content = False
 
-        for line in lines:
+        for line in ai_reply.split("\n"):
             if line.startswith("TITULO:"):
                 title = line.replace("TITULO:", "").strip()
+            elif line.startswith("INSIGHT:"):
+                insight = line.replace("INSIGHT:", "").strip()
+            elif line.startswith("ENLACES:"):
+                links = line.replace("ENLACES:", "").strip()
             elif line.startswith("CONTENIDO:"):
                 is_content = True
             elif is_content:
@@ -230,9 +264,11 @@ CONTENIDO:
 
         if success:
             await status_msg.edit_text(
-                f"✨ **¡Nodo incorporado a tu Grafo!**\n\n"
-                f"📁 **Archivo:** `{file_path}`\n"
-                f"🔗 Se crearon enlaces conceptuales y ya está disponible en tu repositorio.",
+                f"💎 **¡Nodo incorporado con éxito!**\n\n"
+                f"📌 **Nota:** `{clean_title}.md`\n"
+                f"💡 **Insight:** _{insight}_\n"
+                f"🔗 **Conexiones:** {links}\n\n"
+                f"✨ _Sincronizado en tu GitHub y listo para Obsidian._",
                 parse_mode="Markdown"
             )
         else:
