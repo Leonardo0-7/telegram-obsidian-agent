@@ -162,13 +162,23 @@
               "icon": "lucide-list",
               "title": "Outline"
             }
+          },
+          {
+            "id": "477e1ed8ac569280",
+            "type": "leaf",
+            "state": {
+              "type": "git-view",
+              "state": {},
+              "icon": "git-pull-request",
+              "title": "Source Control"
+            }
           }
-        ]
+        ],
+        "currentTab": 5
       }
     ],
     "direction": "horizontal",
-    "width": 300,
-    "collapsed": true
+    "width": 300
   },
   "left-ribbon": {
     "hiddenItems": {
@@ -185,6 +195,8 @@
   "active": "cf486a1c87cb9a36",
   "lastOpenFiles": [
     "Obsesiones/Chasquis como Red de Paquetes.md",
+    "Obsesiones/Interrupción y Recarga Cognitiva.md",
+    "Redes de Relevos.md",
     "Obsesiones"
   ]
 }

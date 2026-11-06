@@ -2,7 +2,7 @@
 fecha: 2026-11-06
 tags: [redes, inca, chasquis, conmutacion, historia-tecnologia]
 ---
-# Chasquis como Red de Paquetes
+G# Chasquis como Red de Paquetes
 
 ### Núcleo Conceptual
 Los chasquis operaban en postas fijas donde cada corredor relevaba el mensaje sin acompañarlo hasta el destino: el contenido (paquete) viajaba, no el emisor (circuito). Esta fragmentación en tramos con reensamblaje implícito —oral o vía quipu— replica la lógica de conmutación de paquetes: sin ruta reservada, con nodos que solo reenvían. La conmutación de circuitos exigiría un corredor dedicado de extremo a extremo, inexistente en el sistema inca.
