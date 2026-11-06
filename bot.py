@@ -1,4 +1,5 @@
 import os
+import json
 import base64
 import logging
 import datetime
@@ -6,12 +7,13 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import requests
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
     MessageHandler,
     CommandHandler,
+    CallbackQueryHandler,
     filters,
 )
 from openai import OpenAI
@@ -34,6 +36,11 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO = os.getenv("GITHUB_REPO")  # Formato: "usuario/repositorio"
 NOTES_FOLDER = os.getenv("NOTES_FOLDER", "Obsesiones").strip("/")
+WHITELIST_FILE = "config/whitelist.json"
+
+# Estado de usuarios autorizados en memoria
+AUTHORIZED_USERS = {}  # { "user_id_str": {"name": "...", "date": "..."} }
+PUBLIC_MODE = False
 
 # Inicializar cliente de DeepSeek (API compatible con OpenAI)
 ai_client = OpenAI(
@@ -50,12 +57,11 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot is alive and healthy!")
 
     def log_message(self, format, *args):
-        # Silenciar logs del health check para mantener limpia la consola
         pass
 
 
 def run_health_check_server():
-    """Servidor HTTP mínimo para pasar health checks si Koyeb lo corre como Web Service."""
+    """Servidor HTTP mínimo para pasar health checks si Koyeb/Render lo corre como Web Service."""
     port = int(os.getenv("PORT", "8000"))
     try:
         server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
@@ -65,12 +71,11 @@ def run_health_check_server():
         logger.warning(f"No se pudo iniciar el servidor health check: {e}")
 
 
-def get_relevant_notes(user_text, all_notes, top_k=15):
+def get_relevant_notes(user_text, all_notes, top_k=12):
     """Filtra solo las notas más pertinentes para ahorrar tokens en el prompt."""
     if len(all_notes) <= top_k:
         return all_notes
 
-    # Puntuación simple por coincidencia de palabras clave
     user_words = set(w.lower() for w in user_text.split() if len(w) > 3)
     scored = []
     for note in all_notes:
@@ -78,7 +83,6 @@ def get_relevant_notes(user_text, all_notes, top_k=15):
         overlap = len(user_words.intersection(note_words))
         scored.append((overlap, note))
 
-    # Ordenar por mayor coincidencia y tomar las mejores top_k
     scored.sort(key=lambda x: x[0], reverse=True)
     return [note for _, note in scored[:top_k]]
 
@@ -99,7 +103,6 @@ def get_existing_notes():
             files = r.json()
             return [f["name"].replace(".md", "") for f in files if f.get("name", "").endswith(".md")]
         elif r.status_code == 404:
-            # La carpeta aún no existe, se creará con el primer archivo
             return []
         else:
             logger.warning(f"Aviso al listar GitHub ({r.status_code}): {r.text}")
@@ -109,21 +112,20 @@ def get_existing_notes():
 
 
 def save_file_to_github(path, content, commit_message):
-    """Crea o actualiza un archivo .md directamente en GitHub sin clonar repositorio."""
+    """Crea o actualiza un archivo en GitHub sin clonar repositorio."""
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
         "Accept": "application/vnd.github+json"
     }
 
-    # Verificar si el archivo ya existe para obtener su SHA (requerido para actualizar)
     sha = None
     try:
         check_res = requests.get(url, headers=headers, timeout=10)
         if check_res.status_code == 200:
             sha = check_res.json().get("sha")
     except Exception as e:
-        logger.warning(f"No se pudo consultar SHA previo: {e}")
+        logger.warning(f"No se pudo consultar SHA previo de {path}: {e}")
 
     encoded_content = base64.b64encode(content.encode("utf-8")).decode("utf-8")
     payload = {
@@ -140,36 +142,265 @@ def save_file_to_github(path, content, commit_message):
         return False, f"HTTP {r.status_code}: {r.text}"
 
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /start para comprobar que el agente está vivo."""
-    user = update.effective_user
-    if ALLOWED_USER_ID != 0 and user.id != ALLOWED_USER_ID:
-        await update.message.reply_text(f"⛔ Acceso no autorizado. Tu Telegram ID es: `{user.id}`", parse_mode="Markdown")
+# ================= GESTIÓN DE WHITELIST (USUARIOS AUTORIZADOS) =================
+
+def load_whitelist():
+    """Carga los usuarios invitados autorizados desde GitHub."""
+    global AUTHORIZED_USERS, PUBLIC_MODE
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{WHITELIST_FILE}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json"
+    }
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            content_b64 = r.json().get("content", "")
+            data = json.loads(base64.b64decode(content_b64).decode("utf-8"))
+            AUTHORIZED_USERS = data.get("users", {})
+            PUBLIC_MODE = data.get("public_mode", False)
+            logger.info(f"Whitelist cargada: {len(AUTHORIZED_USERS)} invitados. Modo público: {PUBLIC_MODE}")
+    except Exception as e:
+        logger.warning(f"Whitelist no encontrada o vacía ({e}), iniciando nueva.")
+
+
+def sync_whitelist_to_github():
+    """Guarda permanentemente la lista de usuarios autorizados en GitHub."""
+    data = {
+        "public_mode": PUBLIC_MODE,
+        "users": AUTHORIZED_USERS
+    }
+    content = json.dumps(data, indent=2, ensure_ascii=False)
+    save_file_to_github(WHITELIST_FILE, content, "Config: actualizar lista de usuarios autorizados")
+
+
+def is_user_authorized(user_id):
+    """Verifica si un usuario puede hablar con el bot."""
+    if PUBLIC_MODE or ALLOWED_USER_ID == 0:
+        return True
+    if user_id == ALLOWED_USER_ID:
+        return True
+    return str(user_id) in AUTHORIZED_USERS
+
+
+async def notify_unauthorized_attempt(user, context: ContextTypes.DEFAULT_TYPE):
+    """Notifica al creador cuando alguien intenta usar el bot y le envía botones de aprobación."""
+    if ALLOWED_USER_ID == 0:
         return
 
+    first_name = user.first_name or "Usuario"
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Autorizar", callback_data=f"appr_{user.id}_{first_name}"),
+            InlineKeyboardButton("❌ Denegar", callback_data=f"deny_{user.id}_{first_name}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    username_display = f"@{user.username}" if user.username else "Sin alias"
+    try:
+        await context.bot.send_message(
+            chat_id=ALLOWED_USER_ID,
+            text=(
+                f"🔔 **Solicitud de Acceso para Pruebas**\n\n"
+                f"👤 **Nombre:** {user.full_name}\n"
+                f"📱 **Usuario:** {username_display}\n"
+                f"🆔 **ID:** `{user.id}`\n\n"
+                f"¿Deseas permitirle usar el bot para que pruebe el grafo?"
+            ),
+            parse_mode="Markdown",
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.error(f"Error notificando al administrador: {e}")
+
+
+def build_admin_keyboard():
+    """Construye los botones del panel de control de usuarios."""
+    keyboard = []
+    mode_text = "🔓 Modo Libre: ACTIVADO (Cualquiera entra)" if PUBLIC_MODE else "🔒 Modo Privado: ACTIVADO (Solo lista)"
+    keyboard.append([InlineKeyboardButton(mode_text, callback_data="toggle_mode")])
+
+    for uid, data in AUTHORIZED_USERS.items():
+        name = data.get("name", uid)
+        keyboard.append([InlineKeyboardButton(f"❌ Quitar acceso a: {name}", callback_data=f"del_{uid}")])
+
+    keyboard.append([InlineKeyboardButton("🔄 Actualizar lista", callback_data="refresh_admin")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ================= COMANDOS DE ADMINISTRADOR =================
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Panel visual para que el dueño agregue o quite usuarios con 1 clic."""
+    user = update.effective_user
+    if ALLOWED_USER_ID != 0 and user.id != ALLOWED_USER_ID:
+        return
+
+    text = (
+        f"👑 **Panel de Gestión de Usuarios (Pruebas)**\n\n"
+        f"• **Admin:** `{ALLOWED_USER_ID}`\n"
+        f"• **Modo actual:** {'🔓 Libre (Público)' if PUBLIC_MODE else '🔒 Privado (Protegido)'}\n"
+        f"• **Invitados con acceso:** {len(AUTHORIZED_USERS)}\n\n"
+        f"Toca los botones para activar/desactivar o quitar a alguien.\n\n"
+        f"Comandos manuales rápidos:\n"
+        f"• `/add <ID> <Nombre>` - Agregar invitado directamente\n"
+        f"• `/remove <ID>` - Quitar invitado"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=build_admin_keyboard())
+
+
+async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /add <ID> <Nombre> para añadir manualmente."""
+    if ALLOWED_USER_ID != 0 and update.effective_user.id != ALLOWED_USER_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: `/add <ID_NUMERICO> [Nombre]`", parse_mode="Markdown")
+        return
+    target_id = context.args[0].strip()
+    target_name = " ".join(context.args[1:]) if len(context.args) > 1 else f"Invitado_{target_id}"
+
+    AUTHORIZED_USERS[str(target_id)] = {
+        "name": target_name,
+        "date": datetime.date.today().isoformat()
+    }
+    sync_whitelist_to_github()
+    await update.message.reply_text(f"✅ Usuario **{target_name}** (`{target_id}`) autorizado.", parse_mode="Markdown")
+
+
+async def remove_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /remove <ID> para revocar manualmente."""
+    if ALLOWED_USER_ID != 0 and update.effective_user.id != ALLOWED_USER_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: `/remove <ID_NUMERICO>`", parse_mode="Markdown")
+        return
+    target_id = context.args[0].strip()
+    if str(target_id) in AUTHORIZED_USERS:
+        name = AUTHORIZED_USERS[str(target_id)].get("name", target_id)
+        del AUTHORIZED_USERS[str(target_id)]
+        sync_whitelist_to_github()
+        await update.message.reply_text(f"🗑️ Acceso revocado a **{name}** (`{target_id}`).", parse_mode="Markdown")
+    else:
+        await update.message.reply_text("Ese ID no está en la lista de autorizados.")
+
+
+async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gestiona los clics en los botones interactivos."""
+    query = update.callback_query
+    await query.answer()
+    clicker_id = query.from_user.id
+
+    if ALLOWED_USER_ID != 0 and clicker_id != ALLOWED_USER_ID:
+        await query.edit_message_text("⛔ Solo el administrador puede usar estos controles.")
+        return
+
+    data = query.data
+
+    if data.startswith("appr_"):
+        parts = data.split("_", 2)
+        target_id = parts[1]
+        target_name = parts[2] if len(parts) > 2 else f"Usuario_{target_id}"
+        AUTHORIZED_USERS[str(target_id)] = {
+            "name": target_name,
+            "date": datetime.date.today().isoformat()
+        }
+        sync_whitelist_to_github()
+        await query.edit_message_text(f"✅ **¡Acceso autorizado!**\n**{target_name}** (`{target_id}`) ya puede usar el bot.", parse_mode="Markdown")
+        try:
+            await context.bot.send_message(
+                chat_id=int(target_id),
+                text="🎉 **¡Acceso concedido!**\nLeonardo te ha autorizado a probar el bot. Ya puedes enviarme tus ideas, dudas o pensamientos.",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.warning(f"No se pudo notificar al usuario aprobado: {e}")
+
+    elif data.startswith("deny_"):
+        parts = data.split("_", 2)
+        target_id = parts[1]
+        target_name = parts[2] if len(parts) > 2 else target_id
+        await query.edit_message_text(f"❌ Acceso **DENEGADO** a {target_name} (`{target_id}`).", parse_mode="Markdown")
+        try:
+            await context.bot.send_message(
+                chat_id=int(target_id),
+                text="⛔ Tu solicitud de acceso para pruebas fue rechazada por el administrador.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
+    elif data.startswith("del_"):
+        target_id = data.replace("del_", "")
+        if str(target_id) in AUTHORIZED_USERS:
+            name = AUTHORIZED_USERS[str(target_id)].get("name", target_id)
+            del AUTHORIZED_USERS[str(target_id)]
+            sync_whitelist_to_github()
+            await query.edit_message_reply_markup(reply_markup=build_admin_keyboard())
+            try:
+                await context.bot.send_message(
+                    chat_id=int(target_id),
+                    text="ℹ️ Tu acceso de prueba ha finalizado. ¡Gracias por participar!",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+
+    elif data == "toggle_mode":
+        global PUBLIC_MODE
+        PUBLIC_MODE = not PUBLIC_MODE
+        sync_whitelist_to_github()
+        await query.edit_message_reply_markup(reply_markup=build_admin_keyboard())
+
+    elif data == "refresh_admin":
+        load_whitelist()
+        await query.edit_message_reply_markup(reply_markup=build_admin_keyboard())
+
+
+# ================= COMANDOS GENERALES Y MENSAJES =================
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /start."""
+    user = update.effective_user
+    if not is_user_authorized(user.id):
+        await update.message.reply_text(
+            f"⏳ **Acceso Restringido (Modo Pruebas)**\n\n"
+            f"Tu Telegram ID es: `{user.id}`\n\n"
+            f"He enviado una solicitud al creador del bot (Leonardo) para que autorice tu acceso.",
+            parse_mode="Markdown"
+        )
+        await notify_unauthorized_attempt(user, context)
+        return
+
+    is_admin = (user.id == ALLOWED_USER_ID)
+    admin_help = "\n\n⚙️ **Controles de Administrador:**\n• `/admin` - Gestionar quién puede usar el bot." if is_admin else ""
+
     await update.message.reply_text(
-        f"🌌 **¡Hola {user.first_name}! Soy tu Cartógrafo de Obsesiones.**\n\n"
-        f"Envíame cualquier pensamiento, idea fugaz o curiosidad por aquí.\n"
-        f"• Los analizaré con **DeepSeek** para conectarlos con tu grafo de **Obsidian**.\n"
-        f"• Cada semana te enviaré una **Micro-Tesis Inédita** cruzando conceptos.\n\n"
+        f"🌌 **¡Hola {user.first_name}! Soy el Cartógrafo de Obsesiones.**\n\n"
+        f"Envíame cualquier pensamiento, idea fugaz, hábito o curiosidad.\n"
+        f"• Conectaré tu idea con **DeepSeek** para trazar el grafo en **Obsidian**.\n"
+        f"• Crearé enlaces conceptuales automáticos entre tus pensamientos.{admin_help}\n\n"
         f"Comandos útiles:\n"
-        f"• `/sintesis` - Genera una síntesis interdisciplinaria de inmediato sin esperar la semana.\n"
-        f"• `/status` - Verifica la conexión con GitHub y DeepSeek.",
+        f"• `/sintesis` - Genera una Micro-Tesis inédita cruzando tus notas.\n"
+        f"• `/status` - Consulta el estado del grafo.",
         parse_mode="Markdown"
     )
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Verifica estado de GitHub y número de notas en el grafo."""
-    if ALLOWED_USER_ID != 0 and update.effective_user.id != ALLOWED_USER_ID:
+    user = update.effective_user
+    if not is_user_authorized(user.id):
         return
 
     notes = get_existing_notes()
     await update.message.reply_text(
-        f"📊 **Estado de tu Bóveda:**\n"
+        f"📊 **Estado del Grafo:**\n"
         f"• Repositorio: `{GITHUB_REPO or 'No configurado'}`\n"
         f"• Carpeta: `{NOTES_FOLDER}`\n"
-        f"• Nodos detectados: **{len(notes)} notas**\n"
+        f"• Nodos en la bóveda: **{len(notes)} notas**\n"
+        f"• Invitados activos: **{len(AUTHORIZED_USERS)}**\n"
         f"• Modelo IA: `deepseek-chat` / `deepseek-reasoner`",
         parse_mode="Markdown"
     )
@@ -178,21 +409,26 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Procesa cada mensaje con máxima densidad conceptual y mínimo consumo de tokens."""
     user = update.effective_user
-    if ALLOWED_USER_ID != 0 and user.id != ALLOWED_USER_ID:
-        await update.message.reply_text(f"⛔ No autorizado. Tu ID: `{user.id}`", parse_mode="Markdown")
+    if not is_user_authorized(user.id):
+        await update.message.reply_text(
+            f"⏳ **Acceso Restringido.**\nTu Telegram ID es: `{user.id}`\n\n"
+            f"Se ha enviado una solicitud a Leonardo para que te habilite.",
+            parse_mode="Markdown"
+        )
+        await notify_unauthorized_attempt(user, context)
         return
 
     user_text = update.message.text
     status_msg = await update.message.reply_text("⚡ Sintetizando idea y trazando grafo...")
 
-    # 1. Obtener notas y filtrar solo las más relevantes (ahorro masivo de tokens)
+    # 1. Obtener notas y filtrar solo las más relevantes (ahorro de tokens)
     all_notes = get_existing_notes()
     relevant_notes = get_relevant_notes(user_text, all_notes, top_k=12)
     context_notes_str = ", ".join([f"[[{n}]]" for n in relevant_notes]) if relevant_notes else "Bóveda vacía"
 
     today = datetime.date.today().isoformat()
 
-    # Prompt hiper-optimizado: cero relleno, máxima densidad tipo Zettelkasten
+    # Prompt hiper-optimizado
     system_prompt = f"""Actúa como un sintetizador de conocimiento de alta densidad (Zettelkasten).
 Notas candidatas para conectar: {context_notes_str}
 
@@ -207,6 +443,7 @@ CONTENIDO:
 ---
 fecha: {today}
 tags: [tag1, tag2, tag3]
+autor: {user.first_name}
 ---
 # <Mismo Título>
 
@@ -228,7 +465,7 @@ tags: [tag1, tag2, tag3]
                 {"role": "user", "content": user_text}
             ],
             temperature=0.3,
-            max_tokens=500  # Evita divagaciones y ahorra tokens de salida
+            max_tokens=500
         )
         ai_reply = response.choices[0].message.content.strip()
 
@@ -259,7 +496,7 @@ tags: [tag1, tag2, tag3]
         success, err = save_file_to_github(
             file_path,
             final_markdown,
-            f"Obsidian Bot: {clean_title}"
+            f"Obsidian Bot: {clean_title} (vía {user.first_name})"
         )
 
         if success:
@@ -280,10 +517,10 @@ tags: [tag1, tag2, tag3]
 
 
 async def generate_synthesis(context: ContextTypes.DEFAULT_TYPE, manual_trigger=False):
-    """Genera una Micro-Tesis Inédita usando el modelo de razonamiento DeepSeek-R1."""
+    """Genera una Micro-Tesis Inédita usando DeepSeek-R1."""
     notes = get_existing_notes()
     if len(notes) < 2:
-        msg = "Aún tienes muy pocas notas en el grafo (mínimo 2). ¡Sigue compartiendo más ideas!"
+        msg = "Aún hay muy pocas notas en el grafo (mínimo 2). ¡Sigue compartiendo más ideas!"
         if manual_trigger and context.job and context.job.chat_id:
             await context.bot.send_message(chat_id=context.job.chat_id, text=msg)
         return
@@ -307,11 +544,10 @@ Tu misión:
         )
         synthesis = response.choices[0].message.content
 
-        # Guardar también la síntesis en Obsidian en la carpeta de Síntesis
         today = datetime.date.today().isoformat()
         synthesis_title = f"Sintesis-{today}"
         synthesis_md = f"---\nfecha: {today}\ntags: [sintesis-cruzada, micro-tesis]\n---\n# Micro-Tesis: {today}\n\n{synthesis}"
-        
+
         save_file_to_github(
             f"{NOTES_FOLDER}/Sintesis/{synthesis_title}.md",
             synthesis_md,
@@ -331,11 +567,12 @@ Tu misión:
 
 
 async def manual_synthesis_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando manual /sintesis para forzar la generación de una tesis."""
-    if ALLOWED_USER_ID != 0 and update.effective_user.id != ALLOWED_USER_ID:
+    """Comando manual /sintesis."""
+    user = update.effective_user
+    if not is_user_authorized(user.id):
         return
 
-    status = await update.message.reply_text("🧐 DeepSeek Reasoner está analizando el grafo en busca de conexiones ocultas...")
+    await update.message.reply_text("🧐 DeepSeek Reasoner está analizando el grafo en busca de conexiones ocultas...")
     context.job_queue.run_once(
         lambda ctx: generate_synthesis(ctx, manual_trigger=True),
         when=1,
@@ -348,25 +585,37 @@ def main():
         print("❌ ERROR: Falta TELEGRAM_TOKEN en las variables de entorno.")
         return
 
+    # Cargar usuarios autorizados guardados en GitHub al arrancar
+    load_whitelist()
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Handlers
+    # Handlers Generales
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("sintesis", manual_synthesis_command))
+
+    # Handlers del Administrador (Para añadir/quitar usuarios para pruebas)
+    app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("whitelist", admin_command))
+    app.add_handler(CommandHandler("add", add_user_command))
+    app.add_handler(CommandHandler("remove", remove_user_command))
+    app.add_handler(CallbackQueryHandler(callback_query_handler))
+
+    # Handler de Mensajes de Texto
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text))
 
-    # Tarea recurrente: Síntesis semanal proactiva (cada 7 días = 604800 seg)
+    # Tarea proactiva semanal (cada 7 días)
     if app.job_queue:
         app.job_queue.run_repeating(
             generate_synthesis,
             interval=604800,
-            first=86400  # Primer disparo tras 24h de estar encendido
+            first=86400
         )
 
-    logger.info("Bot persistente iniciado con éxito.")
+    logger.info("Bot persistente iniciado con sistema de administración dinámico.")
 
-    # Iniciar servidor de health check en segundo plano (para Koyeb/Render)
+    # Iniciar servidor de health check en segundo plano
     threading.Thread(target=run_health_check_server, daemon=True).start()
 
     app.run_polling()
