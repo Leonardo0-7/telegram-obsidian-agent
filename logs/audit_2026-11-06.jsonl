@@ -402,3 +402,4 @@
 {"seq": 1, "timestamp": "2026-11-06T23:09:18.801165+00:00", "level": "INFO", "event": "AGENT_STARTUP", "user": null, "details": {"version": "2.2", "repo": "Leonardo0-7/telegram-obsidian-agent", "folder": "Obsesiones"}}
 {"seq": 2, "timestamp": "2026-11-06T23:40:58.754873+00:00", "level": "WARNING", "event": "AUTH_UNAUTHORIZED_ATTEMPT", "user": {"id": 1409926639, "username": "Escamcep", "first_name": "Cam"}, "details": {"name": "Cam", "username": "Escamcep"}}
 {"seq": 3, "timestamp": "2026-11-06T23:40:59.344938+00:00", "level": "WARNING", "event": "AUTH_UNAUTHORIZED_ATTEMPT", "user": {"id": 1409926639, "username": "Escamcep", "first_name": "Cam"}, "details": {"name": "Cam", "username": "Escamcep"}}
+{"seq": 2, "timestamp": "2026-11-06T23:46:34.901440+00:00", "level": "INFO", "event": "AUTH_ACCESS_APPROVED", "user": {"id": 1883931499, "username": "Zizou_052", "first_name": "Leonardo"}, "details": {"approved_id": "1409926639", "name": "Cam"}}
