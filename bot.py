@@ -89,9 +89,9 @@ def record_audit_event(event_type, details=None, user=None, level="INFO"):
     logger.info(f"[AUDIT #{current_seq}] [{event_type}] {details}")
 
 
-def append_log_to_github(entry):
-    """Escribe de forma acumulativa (append-only) en el archivo diario de logs en GitHub."""
-    if not GITHUB_TOKEN or not GITHUB_REPO:
+def append_logs_batch_to_github(entries):
+    """Escribe un lote de logs en GitHub de forma acumulativa con [skip ci]."""
+    if not GITHUB_TOKEN or not GITHUB_REPO or not entries:
         return
 
     today_str = datetime.date.today().isoformat()
@@ -114,13 +114,14 @@ def append_log_to_github(entry):
     except Exception as e:
         logger.warning(f"Error consultando log previo en GitHub: {e}")
 
-    # Formatear la línea JSONL
-    new_line = json.dumps(entry, ensure_ascii=False) + "\n"
-    updated_content = existing_content + new_line
+    new_lines = "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n"
+    updated_content = existing_content + new_lines
     encoded_content = base64.b64encode(updated_content.encode("utf-8")).decode("utf-8")
 
+    first_seq = entries[0]['seq']
+    last_seq = entries[-1]['seq']
     payload = {
-        "message": f"audit: #{entry['seq']} {entry['event']}",
+        "message": f"audit: #{first_seq}-#{last_seq} ({len(entries)} eventos) [skip ci]",
         "content": encoded_content
     }
     if sha:
@@ -129,23 +130,33 @@ def append_log_to_github(entry):
     try:
         put_res = requests.put(url, json=payload, headers=headers, timeout=15)
         if put_res.status_code not in [200, 201]:
-            logger.warning(f"No se pudo persistir log #{entry['seq']} en GitHub: {put_res.text}")
+            logger.warning(f"No se pudo persistir lote de logs en GitHub: {put_res.text}")
     except Exception as e:
-        logger.error(f"Fallo al enviar log a GitHub: {e}")
+        logger.error(f"Fallo al enviar lote de logs a GitHub: {e}")
 
 
 def log_worker():
-    """Hilo trabajador en segundo plano que procesa la cola de auditoría de manera secuencial."""
+    """Hilo trabajador que acumula logs y los envía en lotes con [skip ci] para no saturar."""
+    batch = []
+    last_flush = time.time()
     while True:
         try:
-            entry = LOG_QUEUE.get()
-            if entry is None:
-                break
-            append_log_to_github(entry)
-            LOG_QUEUE.task_done()
-            time.sleep(0.5)  # Evitar saturar el rate-limit de GitHub
+            try:
+                entry = LOG_QUEUE.get(timeout=5)
+                if entry.get("event") != "AGENT_STARTUP":
+                    batch.append(entry)
+                LOG_QUEUE.task_done()
+            except queue.Empty:
+                pass
+
+            now = time.time()
+            if batch and (len(batch) >= 5 or (now - last_flush) >= 30):
+                append_logs_batch_to_github(batch)
+                batch = []
+                last_flush = now
         except Exception as e:
             logger.error(f"Error en log_worker: {e}")
+            time.sleep(5)
 
 # Inicializar cliente de DeepSeek (API compatible con OpenAI)
 ai_client = OpenAI(
@@ -233,8 +244,9 @@ def save_file_to_github(path, content, commit_message):
         logger.warning(f"No se pudo consultar SHA previo de {path}: {e}")
 
     encoded_content = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+    safe_commit_msg = f"{commit_message} [skip ci]" if "[skip ci]" not in commit_message else commit_message
     payload = {
-        "message": commit_message,
+        "message": safe_commit_msg,
         "content": encoded_content
     }
     if sha:
