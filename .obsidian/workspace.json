@@ -11,10 +11,10 @@
             "id": "cf486a1c87cb9a36",
             "type": "leaf",
             "state": {
-              "type": "empty",
+              "type": "graph",
               "state": {},
-              "icon": "lucide-file",
-              "title": "New tab"
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
             }
           }
         ]
@@ -183,5 +183,8 @@
     }
   },
   "active": "cf486a1c87cb9a36",
-  "lastOpenFiles": []
+  "lastOpenFiles": [
+    "Obsesiones/Chasquis como Red de Paquetes.md",
+    "Obsesiones"
+  ]
 }
