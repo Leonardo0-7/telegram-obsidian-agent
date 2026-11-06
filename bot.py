@@ -2,6 +2,8 @@ import os
 import base64
 import logging
 import datetime
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import requests
 from dotenv import load_dotenv
 from telegram import Update
@@ -38,6 +40,29 @@ ai_client = OpenAI(
     api_key=DEEPSEEK_API_KEY,
     base_url="https://api.deepseek.com"
 )
+
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and healthy!")
+
+    def log_message(self, format, *args):
+        # Silenciar logs del health check para mantener limpia la consola
+        pass
+
+
+def run_health_check_server():
+    """Servidor HTTP mínimo para pasar health checks si Koyeb lo corre como Web Service."""
+    port = int(os.getenv("PORT", "8000"))
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        logger.info(f"Health check HTTP iniciado en puerto {port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.warning(f"No se pudo iniciar el servidor health check: {e}")
 
 
 def get_existing_notes():
@@ -304,6 +329,10 @@ def main():
         )
 
     logger.info("Bot persistente iniciado con éxito.")
+
+    # Iniciar servidor de health check en segundo plano (para Koyeb/Render)
+    threading.Thread(target=run_health_check_server, daemon=True).start()
+
     app.run_polling()
 
 
