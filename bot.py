@@ -1,9 +1,12 @@
 import os
 import json
+import time
+import queue
 import base64
 import logging
 import datetime
 import threading
+from collections import deque
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import requests
 from dotenv import load_dotenv
@@ -37,10 +40,112 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO = os.getenv("GITHUB_REPO")  # Formato: "usuario/repositorio"
 NOTES_FOLDER = os.getenv("NOTES_FOLDER", "Obsesiones").strip("/")
 WHITELIST_FILE = "config/whitelist.json"
+LOGS_FOLDER = "logs"
 
 # Estado de usuarios autorizados en memoria
 AUTHORIZED_USERS = {}  # { "user_id_str": {"name": "...", "date": "..."} }
 PUBLIC_MODE = False
+
+# ================= SISTEMA DE LOGS Y AUDITORÍA INMUTABLE =================
+LOG_QUEUE = queue.Queue()
+RECENT_LOGS = deque(maxlen=30)  # Últimos 30 eventos para consulta inmediata en Telegram
+LOG_SEQ = 0
+LOG_LOCK = threading.Lock()
+
+
+def record_audit_event(event_type, details=None, user=None, level="INFO"):
+    """
+    Registra un evento cronológico y secuencial en memoria y en la cola de persistencia.
+    """
+    global LOG_SEQ
+    with LOG_LOCK:
+        LOG_SEQ += 1
+        current_seq = LOG_SEQ
+
+    now_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    
+    user_payload = None
+    if user:
+        user_payload = {
+            "id": getattr(user, "id", None),
+            "username": getattr(user, "username", None),
+            "first_name": getattr(user, "first_name", None)
+        }
+
+    entry = {
+        "seq": current_seq,
+        "timestamp": now_utc,
+        "level": level,
+        "event": event_type,
+        "user": user_payload,
+        "details": details or {}
+    }
+
+    # Guardar en memoria para acceso rápido
+    RECENT_LOGS.append(entry)
+    # Encolar para escritura asíncrona en GitHub
+    LOG_QUEUE.put(entry)
+
+    logger.info(f"[AUDIT #{current_seq}] [{event_type}] {details}")
+
+
+def append_log_to_github(entry):
+    """Escribe de forma acumulativa (append-only) en el archivo diario de logs en GitHub."""
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return
+
+    today_str = datetime.date.today().isoformat()
+    log_path = f"{LOGS_FOLDER}/audit_{today_str}.jsonl"
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{log_path}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json"
+    }
+
+    sha = None
+    existing_content = ""
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            sha = data.get("sha")
+            raw_b64 = data.get("content", "")
+            existing_content = base64.b64decode(raw_b64).decode("utf-8")
+    except Exception as e:
+        logger.warning(f"Error consultando log previo en GitHub: {e}")
+
+    # Formatear la línea JSONL
+    new_line = json.dumps(entry, ensure_ascii=False) + "\n"
+    updated_content = existing_content + new_line
+    encoded_content = base64.b64encode(updated_content.encode("utf-8")).decode("utf-8")
+
+    payload = {
+        "message": f"audit: #{entry['seq']} {entry['event']}",
+        "content": encoded_content
+    }
+    if sha:
+        payload["sha"] = sha
+
+    try:
+        put_res = requests.put(url, json=payload, headers=headers, timeout=15)
+        if put_res.status_code not in [200, 201]:
+            logger.warning(f"No se pudo persistir log #{entry['seq']} en GitHub: {put_res.text}")
+    except Exception as e:
+        logger.error(f"Fallo al enviar log a GitHub: {e}")
+
+
+def log_worker():
+    """Hilo trabajador en segundo plano que procesa la cola de auditoría de manera secuencial."""
+    while True:
+        try:
+            entry = LOG_QUEUE.get()
+            if entry is None:
+                break
+            append_log_to_github(entry)
+            LOG_QUEUE.task_done()
+            time.sleep(0.5)  # Evitar saturar el rate-limit de GitHub
+        except Exception as e:
+            logger.error(f"Error en log_worker: {e}")
 
 # Inicializar cliente de DeepSeek (API compatible con OpenAI)
 ai_client = OpenAI(
@@ -187,6 +292,7 @@ def is_user_authorized(user_id):
 
 async def notify_unauthorized_attempt(user, context: ContextTypes.DEFAULT_TYPE):
     """Notifica al creador cuando alguien intenta usar el bot y le envía botones de aprobación."""
+    record_audit_event("AUTH_UNAUTHORIZED_ATTEMPT", {"name": user.full_name, "username": user.username}, user=user, level="WARNING")
     if ALLOWED_USER_ID == 0:
         return
 
@@ -226,7 +332,10 @@ def build_admin_keyboard():
         name = data.get("name", uid)
         keyboard.append([InlineKeyboardButton(f"❌ Quitar acceso a: {name}", callback_data=f"del_{uid}")])
 
-    keyboard.append([InlineKeyboardButton("🔄 Actualizar lista", callback_data="refresh_admin")])
+    keyboard.append([
+        InlineKeyboardButton("📜 Ver Logs de Auditoría", callback_data="view_logs"),
+        InlineKeyboardButton("🔄 Actualizar", callback_data="refresh_admin")
+    ])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -266,12 +375,14 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "date": datetime.date.today().isoformat()
     }
     sync_whitelist_to_github()
+    record_audit_event("AUTH_MANUAL_ADD", {"target_id": target_id, "name": target_name}, user=user)
     await update.message.reply_text(f"✅ Usuario **{target_name}** (`{target_id}`) autorizado.", parse_mode="Markdown")
 
 
 async def remove_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /remove <ID> para revocar manualmente."""
-    if ALLOWED_USER_ID != 0 and update.effective_user.id != ALLOWED_USER_ID:
+    user = update.effective_user
+    if ALLOWED_USER_ID != 0 and user.id != ALLOWED_USER_ID:
         return
     if not context.args:
         await update.message.reply_text("Uso: `/remove <ID_NUMERICO>`", parse_mode="Markdown")
@@ -281,6 +392,7 @@ async def remove_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         name = AUTHORIZED_USERS[str(target_id)].get("name", target_id)
         del AUTHORIZED_USERS[str(target_id)]
         sync_whitelist_to_github()
+        record_audit_event("AUTH_MANUAL_REMOVE", {"target_id": target_id, "name": name}, user=user)
         await update.message.reply_text(f"🗑️ Acceso revocado a **{name}** (`{target_id}`).", parse_mode="Markdown")
     else:
         await update.message.reply_text("Ese ID no está en la lista de autorizados.")
@@ -307,6 +419,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             "date": datetime.date.today().isoformat()
         }
         sync_whitelist_to_github()
+        record_audit_event("AUTH_ACCESS_APPROVED", {"approved_id": target_id, "name": target_name}, user=query.from_user)
         await query.edit_message_text(f"✅ **¡Acceso autorizado!**\n**{target_name}** (`{target_id}`) ya puede usar el bot.", parse_mode="Markdown")
         try:
             await context.bot.send_message(
@@ -321,6 +434,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         parts = data.split("_", 2)
         target_id = parts[1]
         target_name = parts[2] if len(parts) > 2 else target_id
+        record_audit_event("AUTH_ACCESS_DENIED", {"denied_id": target_id, "name": target_name}, user=query.from_user)
         await query.edit_message_text(f"❌ Acceso **DENEGADO** a {target_name} (`{target_id}`).", parse_mode="Markdown")
         try:
             await context.bot.send_message(
@@ -337,6 +451,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             name = AUTHORIZED_USERS[str(target_id)].get("name", target_id)
             del AUTHORIZED_USERS[str(target_id)]
             sync_whitelist_to_github()
+            record_audit_event("AUTH_ACCESS_REVOKED", {"revoked_id": target_id, "name": name}, user=query.from_user)
             await query.edit_message_reply_markup(reply_markup=build_admin_keyboard())
             try:
                 await context.bot.send_message(
@@ -351,11 +466,53 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         global PUBLIC_MODE
         PUBLIC_MODE = not PUBLIC_MODE
         sync_whitelist_to_github()
+        record_audit_event("AUTH_MODE_TOGGLED", {"public_mode": PUBLIC_MODE}, user=query.from_user)
         await query.edit_message_reply_markup(reply_markup=build_admin_keyboard())
 
     elif data == "refresh_admin":
         load_whitelist()
         await query.edit_message_reply_markup(reply_markup=build_admin_keyboard())
+
+    elif data == "view_logs":
+        await logs_command(update, context)
+
+
+async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra el registro cronológico y secuencial de auditoría."""
+    user = update.effective_user
+    if ALLOWED_USER_ID != 0 and user.id != ALLOWED_USER_ID:
+        return
+
+    if not RECENT_LOGS:
+        msg = "📜 **El registro de auditoría está vacío por ahora.**"
+        if update.callback_query:
+            await update.callback_query.message.reply_text(msg, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(msg, parse_mode="Markdown")
+        return
+
+    # Tomar los últimos 6 eventos cronológicos
+    logs_to_show = list(RECENT_LOGS)[-6:]
+    lines = ["📜 **Registro Cronológico e Imborrable (Últimos eventos):**\n"]
+    for l in logs_to_show:
+        user_name = l['user']['first_name'] if l.get('user') and l['user'].get('first_name') else "⚙️ Sistema"
+        details_summary = json.dumps(l['details'], ensure_ascii=False)
+        if len(details_summary) > 65:
+            details_summary = details_summary[:62] + "..."
+        lines.append(
+            f"• **[#{l['seq']:03d}]** `{l['timestamp'][11:19]} UTC` — `{l['event']}`\n"
+            f"  👤 {user_name} | ℹ️ _{details_summary}_"
+        )
+
+    github_url = f"https://github.com/{GITHUB_REPO}/tree/main/{LOGS_FOLDER}"
+    keyboard = [[InlineKeyboardButton("📂 Ver historial completo en GitHub", url=github_url)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    response_text = "\n\n".join(lines)
+    if update.callback_query:
+        await update.callback_query.message.reply_text(response_text, parse_mode="Markdown", reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(response_text, parse_mode="Markdown", reply_markup=reply_markup)
 
 
 # ================= COMANDOS GENERALES Y MENSAJES =================
@@ -419,6 +576,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_text = update.message.text
+    record_audit_event("USER_INPUT_RECEIVED", {"length": len(user_text), "preview": user_text[:80]}, user=user)
+    t_start = time.time()
     status_msg = await update.message.reply_text("⚡ Sintetizando idea y trazando grafo...")
 
     # 1. Obtener notas y filtrar solo las más relevantes (ahorro de tokens)
@@ -468,6 +627,8 @@ autor: {user.first_name}
             max_tokens=500
         )
         ai_reply = response.choices[0].message.content.strip()
+        duration_sec = round(time.time() - t_start, 2)
+        record_audit_event("AI_INFERENCE_SUCCESS", {"model": "deepseek-chat", "duration_sec": duration_sec}, user=user)
 
         # Parseo estructurado
         title = "Nueva_Idea"
@@ -500,6 +661,7 @@ autor: {user.first_name}
         )
 
         if success:
+            record_audit_event("GRAPH_NODE_COMMITTED", {"file_path": file_path, "title": clean_title, "links": links}, user=user)
             await status_msg.edit_text(
                 f"💎 **¡Nodo incorporado con éxito!**\n\n"
                 f"📌 **Nota:** `{clean_title}.md`\n"
@@ -509,10 +671,12 @@ autor: {user.first_name}
                 parse_mode="Markdown"
             )
         else:
+            record_audit_event("GITHUB_WRITE_ERROR", {"file_path": file_path, "error": err}, user=user, level="ERROR")
             await status_msg.edit_text(f"❌ Error al guardar en GitHub:\n`{err}`", parse_mode="Markdown")
 
     except Exception as e:
         logger.error(f"Error procesando nota: {e}")
+        record_audit_event("PROCESSING_EXCEPTION", {"error": str(e)}, user=user, level="ERROR")
         await status_msg.edit_text(f"❌ Error con DeepSeek o conexión: `{str(e)}`", parse_mode="Markdown")
 
 
@@ -553,6 +717,7 @@ Tu misión:
             synthesis_md,
             f"Obsidian Bot: Síntesis semanal {today}"
         )
+        record_audit_event("SYNTHESIS_GENERATED", {"title": synthesis_title, "notes_count": len(notes)})
 
         target_chat = ALLOWED_USER_ID if not manual_trigger else (context.job.chat_id if context.job else ALLOWED_USER_ID)
         await context.bot.send_message(
@@ -595,9 +760,10 @@ def main():
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("sintesis", manual_synthesis_command))
 
-    # Handlers del Administrador (Para añadir/quitar usuarios para pruebas)
+    # Handlers del Administrador (Para añadir/quitar usuarios y ver logs)
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("whitelist", admin_command))
+    app.add_handler(CommandHandler("logs", logs_command))
     app.add_handler(CommandHandler("add", add_user_command))
     app.add_handler(CommandHandler("remove", remove_user_command))
     app.add_handler(CallbackQueryHandler(callback_query_handler))
@@ -613,7 +779,13 @@ def main():
             first=86400
         )
 
-    logger.info("Bot persistente iniciado con sistema de administración dinámico.")
+    # Iniciar trabajador de logs en segundo plano (Append-Only a GitHub)
+    threading.Thread(target=log_worker, daemon=True).start()
+
+    # Registrar evento de arranque
+    record_audit_event("AGENT_STARTUP", {"version": "2.2", "repo": GITHUB_REPO, "folder": NOTES_FOLDER})
+
+    logger.info("Bot persistente iniciado con sistema de auditoría y logs inmutables.")
 
     # Iniciar servidor de health check en segundo plano
     threading.Thread(target=run_health_check_server, daemon=True).start()
