@@ -3,6 +3,7 @@ fecha: 2026-11-07
 tags: [toponimia, mapuche, patagonia, geografía-cultural]
 autor: Can
 ---
+
 # Toponimia de San Carlos de Bariloche
 
 ### Núcleo Conceptual

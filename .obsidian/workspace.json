@@ -11,10 +11,14 @@
             "id": "cf486a1c87cb9a36",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "type": "markdown",
+              "state": {
+                "file": "Obsesiones/Distancia Geográfica Colombia-Argentina.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Distancia Geográfica Colombia-Argentina"
             }
           }
         ]
@@ -194,10 +198,21 @@
   },
   "active": "cf486a1c87cb9a36",
   "lastOpenFiles": [
-    "logs/audit_2026-11-07.jsonl",
+    "Obsesiones/Interrupción y Recarga Cognitiva.md",
+    "Obsesiones/Chasqui Óptico y Atención.md",
+    "Obsesiones/Toponimia de San Carlos de Bariloche.md",
+    "Obsesiones/Transferencia de Masa en Textiles.md",
     "Obsesiones/Sesgo de Duración Afectiva.md",
-    "Obsesiones/Gravedad y Velocidad de Escape.md",
+    "Obsesiones/Distancia Geográfica Colombia-Argentina.md",
     "Errores/Indice_Red_Neuronal_Errores.md",
+    "Obsesiones/Demografía Mundial Actual.md",
+    "Obsesiones/Chasquis como Red de Paquetes.md",
+    "Obsesiones/Gravedad y Velocidad de Escape.md",
+    "Obsesiones/Interrupción como Chasqui Cognitivo.md",
+    "Obsesiones/Propulsión y Control de Cohetes.md",
+    "Obsesiones/Recuento de Lenguas Vivas.md",
+    "Obsesiones/Tensión Superficial y Flotación.md",
+    "logs/audit_2026-11-07.jsonl",
     "Errores/ERR-06_Bucle_Infinito_Autodeploy_Render.md",
     "Errores/ERR-05_Analogias_Forzadas_Por_LLM.md",
     "Errores/ERR-04_Boveda_Obsidian_Fuera_De_Git.md",
@@ -205,14 +220,8 @@
     "Errores/ERR-02_Token_Telegram_Invalido.md",
     "Errores/ERR-01_Incompatibilidad_Httpx_OpenAI.md",
     "Errores",
-    "Obsesiones/Chasqui Óptico y Atención.md",
-    "Obsesiones/Propulsión y Control de Cohetes.md",
-    "Obsesiones/Transferencia de Masa en Textiles.md",
     "logs/audit_2026-11-06.jsonl",
     "logs",
-    "Obsesiones/Interrupción y Recarga Cognitiva.md",
-    "Obsesiones/Interrupción como Chasqui Cognitivo.md",
-    "Obsesiones/Chasquis como Red de Paquetes.md",
     "Memoria de Trabajo como Buffer Limitado.md",
     "README.md",
     "config/whitelist.json",
