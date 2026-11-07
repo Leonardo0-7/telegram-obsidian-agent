@@ -345,9 +345,10 @@ def build_admin_keyboard():
         keyboard.append([InlineKeyboardButton(f"❌ Quitar acceso a: {name}", callback_data=f"del_{uid}")])
 
     keyboard.append([
-        InlineKeyboardButton("📜 Ver Logs de Auditoría", callback_data="view_logs"),
-        InlineKeyboardButton("🔄 Actualizar", callback_data="refresh_admin")
+        InlineKeyboardButton("📜 Logs de Auditoría", callback_data="view_logs"),
+        InlineKeyboardButton("🧠 Red de Errores", callback_data="view_errors")
     ])
+    keyboard.append([InlineKeyboardButton("🔄 Actualizar Lista", callback_data="refresh_admin")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -488,6 +489,9 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "view_logs":
         await logs_command(update, context)
 
+    elif data == "view_errors":
+        await errors_command(update, context)
+
 
 async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Muestra el registro cronológico y secuencial de auditoría."""
@@ -525,6 +529,40 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.reply_text(response_text, parse_mode="Markdown", reply_markup=reply_markup)
     else:
         await update.message.reply_text(response_text, parse_mode="Markdown", reply_markup=reply_markup)
+
+
+async def errors_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra la red neuronal de errores y aprendizajes post-mortem."""
+    user = update.effective_user
+    if not is_user_authorized(user.id):
+        return
+
+    text = (
+        "🧠 **Red Neuronal de Errores y Aprendizajes (Anti-Patrones)**\n\n"
+        "Cada incidente técnico se modeló como un nodo en tu Obsidian para no repetir errores:\n\n"
+        "• **[[ERR-01]]:** Incompatibilidad de dependencias (`httpx` vs `openai`)\n"
+        "  ↳ *Lección:* Version pinning estricto.\n\n"
+        "• **[[ERR-02]]:** Token de Telegram inválido (401)\n"
+        "  ↳ *Lección:* Sanitización estricta de credenciales.\n\n"
+        "• **[[ERR-03]]:** Permiso de GitHub 403 Forbidden\n"
+        "  ↳ *Lección:* Alcance de tokens `repo` para Headless Git.\n\n"
+        "• **[[ERR-04]]:** Bóveda de Obsidian fuera de Git\n"
+        "  ↳ *Lección:* Alineación de ruta cliente con metadirectorio `.git/`.\n\n"
+        "• **[[ERR-05]]:** Analogías forzadas del LLM (*Chasqui Óptico*)\n"
+        "  ↳ *Lección:* Salvaguardas de grounding y desacoplamiento de grafos.\n\n"
+        "• **[[ERR-06]]:** Bucle infinito de autodespliegues en Render\n"
+        "  ↳ *Lección:* Directivas obligatorias `[skip ci]` en GitOps autónomo.\n\n"
+        "💡 _Consulta la carpeta `/Errores` en tu Obsidian para explorar la red interconectada._"
+    )
+
+    github_url = f"https://github.com/{GITHUB_REPO}/tree/main/Errores"
+    keyboard = [[InlineKeyboardButton("🕸️ Ver Grafo de Errores en GitHub", url=github_url)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
 
 # ================= COMANDOS GENERALES Y MENSAJES =================
@@ -780,6 +818,7 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("whitelist", admin_command))
     app.add_handler(CommandHandler("logs", logs_command))
+    app.add_handler(CommandHandler("errores", errors_command))
     app.add_handler(CommandHandler("add", add_user_command))
     app.add_handler(CommandHandler("remove", remove_user_command))
     app.add_handler(CallbackQueryHandler(callback_query_handler))
