@@ -11,10 +11,14 @@
             "id": "cf486a1c87cb9a36",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "type": "markdown",
+              "state": {
+                "file": "Obsesiones/Gravedad y Velocidad de Escape.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Gravedad y Velocidad de Escape"
             }
           }
         ]
@@ -194,10 +198,12 @@
   },
   "active": "cf486a1c87cb9a36",
   "lastOpenFiles": [
+    "Obsesiones/Gravedad y Velocidad de Escape.md",
+    "Obsesiones/Chasqui Óptico y Atención.md",
+    "Obsesiones/Propulsión y Control de Cohetes.md",
     "Obsesiones/Transferencia de Masa en Textiles.md",
     "logs/audit_2026-11-06.jsonl",
     "logs",
-    "Obsesiones/Chasqui Óptico y Atención.md",
     "Obsesiones/Interrupción y Recarga Cognitiva.md",
     "Obsesiones/Interrupción como Chasqui Cognitivo.md",
     "Obsesiones/Chasquis como Red de Paquetes.md",

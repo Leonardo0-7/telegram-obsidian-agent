@@ -3,7 +3,7 @@ fecha: 2026-11-06
 tags: [mecanica-clasica, gravitacion, astrofisica]
 autor: Cam
 ---
-# Gravedad y Velocidad de Escape
+ # Gravedad y Velocidad de Escape
 
 ### Núcleo Conceptual
 La Tierra ejerce una fuerza gravitatoria atractiva sobre el balón que decae con el cuadrado de la distancia, pero que a distancias cercanas a la superficie es prácticamente constante. Al lanzar el balón, le comunicas energía cinética; esta se convierte en energía potencial gravitatoria hasta que la velocidad se anula en el punto más alto y la gravedad lo acelera de vuelta. Para que el balón "se fuera al cielo" y no regresara, necesitaría alcanzar la velocidad de escape (~11,2 km/s en la superficie terrestre), muy superior a la que puede imprimir un brazo humano (~20 m/s).
