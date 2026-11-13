@@ -11,10 +11,14 @@
             "id": "cf486a1c87cb9a36",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "type": "markdown",
+              "state": {
+                "file": "Errores/ERR-05_Analogias_Forzadas_Por_LLM.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "ERR-05_Analogias_Forzadas_Por_LLM"
             }
           }
         ]
@@ -194,6 +198,19 @@
   },
   "active": "cf486a1c87cb9a36",
   "lastOpenFiles": [
+    "Errores/ERR-01_Incompatibilidad_Httpx_OpenAI.md",
+    "Memoria de Trabajo como Buffer Limitado.md",
+    "logs/audit_2026-11-12.jsonl",
+    "logs/audit_2026-11-11.jsonl",
+    "logs/audit_2026-11-10.jsonl",
+    "logs/audit_2026-11-09.jsonl",
+    "logs/audit_2026-11-08.jsonl",
+    "Obsesiones/Sintesis/Sintesis-2026-11-12.md",
+    "Obsesiones/Sintesis/Sintesis-2026-11-11.md",
+    "Obsesiones/Sintesis/Sintesis-2026-11-10.md",
+    "Obsesiones/Sintesis/Sintesis-2026-11-09.md",
+    "Obsesiones/Sintesis/Sintesis-2026-11-08.md",
+    "Obsesiones/Sintesis",
     "Obsesiones/Índice Bursátil Ponderado.md",
     "Obsesiones/Fundación de las Naciones Unidas.md",
     "Obsesiones/Nueva_Idea.md",
@@ -214,18 +231,8 @@
     "logs/audit_2026-11-07.jsonl",
     "Errores/ERR-06_Bucle_Infinito_Autodeploy_Render.md",
     "Errores/ERR-05_Analogias_Forzadas_Por_LLM.md",
-    "Errores/ERR-04_Boveda_Obsidian_Fuera_De_Git.md",
-    "Errores/ERR-03_Permiso_GitHub_403_Forbidden.md",
-    "Errores/ERR-02_Token_Telegram_Invalido.md",
-    "Errores/ERR-01_Incompatibilidad_Httpx_OpenAI.md",
     "Errores",
     "logs/audit_2026-11-06.jsonl",
-    "logs",
-    "Memoria de Trabajo como Buffer Limitado.md",
-    "README.md",
-    "config/whitelist.json",
-    "config",
-    "Redes de Relevos.md",
-    "Obsesiones"
+    "logs"
   ]
 }
