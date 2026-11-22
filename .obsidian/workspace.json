@@ -11,10 +11,14 @@
             "id": "cf486a1c87cb9a36",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "type": "markdown",
+              "state": {
+                "file": "Obsesiones/Distribución QWERTY del Teclado.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Distribución QWERTY del Teclado"
             }
           }
         ]
@@ -194,6 +198,7 @@
   },
   "active": "cf486a1c87cb9a36",
   "lastOpenFiles": [
+    "Obsesiones/Distribución QWERTY del Teclado.md",
     "Obsesiones/Color del Arroz Pulido.md",
     "Obsesiones/Demografía Mundial Actual.md",
     "Obsesiones/Distancia Geográfica Colombia-Argentina.md",
@@ -228,7 +233,6 @@
     "Obsesiones/Sintesis/Sintesis-2026-11-16.md",
     "Obsesiones/Sintesis/Sintesis-2026-11-15.md",
     "Obsesiones/Sintesis/Sintesis-2026-11-14.md",
-    "Obsesiones/Debate sobre el Mejor Futbolista Histórico.md",
     "logs/audit_2026-11-12.jsonl"
   ]
 }
